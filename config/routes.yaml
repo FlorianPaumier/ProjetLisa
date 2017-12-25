@@ -1,0 +1,11 @@
+index:
+    path: /Controller
+    controller: App\Controller\VisionneuseController::index
+
+GetDataClientBrut:
+    path: /DataBrut
+    controller: App\Controller\ClientDataController::index
+
+ImportXMl:
+  path: /ImportXml
+  controller: App\Controller\ImportXmlController::main
