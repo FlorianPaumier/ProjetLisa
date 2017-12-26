@@ -8,7 +8,6 @@
 
 namespace App\Controller;
 
-
 use App\Entity\ArticleEntity;
 use App\Entity\CatalogueEntity;
 use App\Entity\MagasinEntity;
@@ -16,13 +15,18 @@ use App\Entity\OperationEntity;
 use App\Entity\PageEntity;
 use App\Entity\ParametresEntity;
 use App\Entity\ZoneEntity;
+use Doctrine\Common\Persistence\ObjectManager;
+use Doctrine\ORM\EntityManager;
+use SimpleXMLElement;
+use Symfony\Bundle\FrameworkBundle\Controller\Controller;
 use Symfony\Component\Config\Definition\Exception\Exception;
+use Symfony\Component\Validator\Constraints\DateTime;
 
 /**
  * Class ImportXmlController
  * @package App\Controller
  */
-class ImportXmlController
+class ImportXmlController extends Controller
 {
 
     /**
@@ -30,26 +34,32 @@ class ImportXmlController
      */
     private $dirImportXml = "/home/user/Documents/Developpement/API_Project_BTS/ImportLisa/";
 
-    //Entrez dans le systeme
-
     /**
-     *
+     * Fonction d'entré dans le système d'importation
      */
     public function main(): void
     {
         try{
+            //Si le chemin par défaut exist et est un dossier
             if($dirExist = is_dir($this->dirImportXml)){
+
+                //si on arrive a lire le dossier
                 if($handle = scandir($this->dirImportXml)){
-                   foreach ($handle as $dir){
+
+                    //pour chaque élément trouver on le scan
+                  foreach ($handle as $dir){
                        $dirImport = scandir($this->dirImportXml.$dir);
+
+                       //pour chaque élément trouvé on test si c'est un fichier xml
                        foreach ($dirImport as $item){
                            $info = new \SplFileInfo($item);
                            if($info->getExtension() == "xml"){
-                               $this->ImportXmlFile($this->dirImportXml.$dir.DIRECTORY_SEPARATOR.$item);
+                               //On lance l'importation
+                               $this->ImportXmlFile(
+                                   $this->dirImportXml.$dir.DIRECTORY_SEPARATOR.$item);
                            }
                        }
                    }
-                   die();
                 }
             }
          die();
@@ -82,31 +92,60 @@ class ImportXmlController
         {
             try
             {
-                if($xmlfile = simplexml_load_file($filePath, "SimpleXMLElement")){
-                    foreach ($xmlfile->operation as $operationElement){
-                        $operation = $this->GetOperation($operationElement);
+                $em = $this->getDoctrine()->getManager();
 
+                if($xmlfile = simplexml_load_file($filePath, "SimpleXMLElement", LIBXML_NOCDATA)){
+
+                    //On parcours les opérations
+                    foreach ($xmlfile->operation as $operationElement){
+
+                        //On va créer puis récupérer l'opération
+                        /** @var EntityManager $entityManager */
+                        /** @var ObjectManager $em */
+                        /** @var OperationEntity $operation */
+                        $operation = $this->GetOperation($operationElement, $em);
+
+                        //On parcours les catalogues
                         foreach ($operationElement->catalog as $catalogElement){
 
-                            $catalogue = $this->GetCatalogue($catalogElement);
-                            foreach ($catalogElement->pages->page as $pageElement){
-                                $page = $this->GetPage($pageElement);
-                                foreach ($pageElement->products->product as $producElement){
-                                    $article = $this->GetArtcile($producElement);
-                                    $params = $this->GetArticleParams($producElement);
+                            //On va créer le catalogue et le récupérer
+                            /** @var SimpleXMLElement $catalogElement */
+                            /** @var OperationEntity $operation */
+                            /** @var ObjectManager $em */
+                            /** @var CatalogueEntity $catalogue */
+                            $catalogue = $this->GetCatalogue($catalogElement, $operation, $em);
 
-                                    foreach ($producElement->zones->zone as $zoneElement){
-                                        $zone = $this->GetZoneArticle($zoneElement, $article);
+                            //On parcours les pages
+                            foreach ($catalogElement->pages->page as $pageElement){
+
+                                //on créer la page et on la récupère
+                                $page = $this->GetPage($pageElement, $catalogue, $em);
+
+                                //On parcours les pages
+                                foreach ($pageElement->products->product as $productElement){
+
+                                    //On va créer un article et récupérer tous les éléments nécessaires
+                                    $article = $this->GetArtcile($productElement, $page, $em);
+                                    $this->GetArticleParams($productElement, $article, $em);
+
+                                    //on parcours les zones
+                                    foreach ($productElement->zones->zone as $zoneElement){
+                                        //On créer la zone
+                                        $this->GetZoneArticle($zoneElement, $article, $em);
                                     }
                                 }
                             }
 
+                            //On parcours les magasins
                             foreach ($catalogElement->shops->shop as $shopElement){
-                                $shop = $this->GetShop($shopElement);
+                                //On créer les magasins
+                                $this->GetShop($shopElement, $catalogue, $em);
                             }
                         }
                     }
-                    //var_dump($xmlfile->getName("shop"));
+
+                    //on persite dans la base de données
+                    $this->getDoctrine()->getManager()->flush();
                 }
 
 
@@ -174,85 +213,149 @@ class ImportXmlController
         }
 
     /**
-     * @param $operationElement
+     * @param SimpleXMLElement $operationElement
+     * @param ObjectManager $em
      * @return OperationEntity
      */
-    private function GetOperation($operationElement): OperationEntity
+    private function GetOperation(SimpleXMLElement $operationElement, ObjectManager $em): OperationEntity
         {
+            //Dans cette partie on récupère les données
+            //(array) correspond un cast de SimpleXMLElement en tableau
+            $attribute = (array)$operationElement->attributes();
+            $children = (array)$operationElement->children();
+
+
+            //On récupères les valeurs
+            $importID = $attribute["@attributes"]["id"];
+            $code = $children["code"];
+            $title = $children["title"];
+            $startDate = $this->UnixTimeStampToDateTime(doubleval($children["startDate"]));
+            $endDate = $this->UnixTimeStampToDateTime($children["endDate"]);
+
+            //Partie de création de l'objet Operation
             $operation = new OperationEntity();
+
+            $operation->setTitle($title);
+            $operation->setCodeCatalogue($code);
+            $operation->setStartDate($startDate);
+            $operation->setEndDate($endDate);
+            $operation->setImportID($importID);
+
+            //On sauvegarde l'opération en mémoire
+            $em->persist($operation);
+
             return $operation;
         }
 
 
     /**
-     * @param $catalogElement
+     * @param SimpleXMLElement $catalogElement
+     * @param OperationEntity $operation
+     * @param ObjectManager $em
      * @return CatalogueEntity
      */
-    private function GetCatalogue($catalogElement): CatalogueEntity
+    private function GetCatalogue(SimpleXMLElement $catalogElement, OperationEntity $operation, ObjectManager $em): CatalogueEntity
     {
-        $catalogue = new CatalogueEntity();
+        $attribute = (array)$catalogElement->attributes();
+        $children = (array)$catalogElement->children();
+
+        $catalogue = new CatalogueEntity(
+            $attribute["@attributes"]["id"],
+            $children["type"],
+            $children["label"],
+            $children["speed"],
+            intval($children["catalogWidth"]),
+            intval($children["catalogHeight"]),
+            $operation
+            );
+
+        $em->persist($catalogue);
+
         return $catalogue;
     }
 
     /**
-     * @param $pagesElement
+     * @param SimpleXMLElement $pagesElement
+     * @param CatalogueEntity $catalogueEntity
+     * @param ObjectManager $em
      * @return PageEntity
      */
-    private function GetPage($pagesElement): PageEntity
+    private function GetPage(SimpleXMLElement $pagesElement, CatalogueEntity $catalogueEntity, ObjectManager $em): PageEntity
     {
-        $page = new PageEntity();
+        $attribute = (array)$pagesElement->attributes();
+        $children = (array)$pagesElement->children();
+
+
+        $page = new PageEntity(
+            $attribute["@attributes"]["id"],$children["number"],$catalogueEntity
+        );
+
+        $em->persist($page);
+
         return $page;
     }
 
     /**
-     * @param $producElement
+     * @param SimpleXMLElement $producElement
+     * @param PageEntity $pageEntity
+     * @param ObjectManager $em
      * @return ArticleEntity
      */
-    private function GetArtcile($producElement): ArticleEntity
+    private function GetArtcile(SimpleXMLElement $producElement, PageEntity $pageEntity, ObjectManager $em): ArticleEntity
     {
         $article = new ArticleEntity();
         return $article;
     }
 
     /**
-     * @param $producElement
-     * @return ParametresEntity
+     * @param SimpleXMLElement $producElement
+     * @param ArticleEntity $articleEntity
+     * @param ObjectManager $em
+     * @return void
      */
-    private function GetArticleParams($producElement): ParametresEntity
+    private function GetArticleParams(SimpleXMLElement $producElement, ArticleEntity $articleEntity, ObjectManager $em)
     {
         $parametre = new ParametresEntity();
-        return $parametre;
     }
 
     /**
-     * @param $zoneElement
-     * @param $article
-     * @return ZoneEntity
+     * @param SimpleXMLElement $zoneElement
+     * @param ArticleEntity $article
+     * @param ObjectManager $em
+     * @return void
      */
-    private function GetZoneArticle($zoneElement, $article): ZoneEntity
+    private function GetZoneArticle(SimpleXMLElement $zoneElement,ArticleEntity $article, ObjectManager $em)
     {
 
         $zone = new ZoneEntity();
-        return $zone;
+
     }
 
     /**
-     * @param $shopElement
-     * @return MagasinEntity
+     * @param SimpleXMLElement $shopElement
+     * @param CatalogueEntity $catalogueEntity
+     * @param ObjectManager $em
+     * @return void
      */
-    private function GetShop($shopElement): MagasinEntity
+    private function GetShop(SimpleXMLElement $shopElement, CatalogueEntity $catalogueEntity, ObjectManager $em)
     {
         $magasin = new MagasinEntity();
-        return $magasin;
     }
+
     /// <summary>
-    /// Fonction pour transformer un Date et DateTime
+    /// Fonction pour transformer un timestamp sous forme de String en DateTime
     /// </summary>
     /// <param name="unixTimeStamp">Date récupérer dans le XML</param>
     /// <returns>un DateTime</returns>
-    private static function UnixTimeStampToDateTime(double $unixTimeStamp)
+    /**
+     * @param float $unixTimeStamp
+     * @return DateTime
+     */
+    private static function UnixTimeStampToDateTime(float $unixTimeStamp): \DateTime
     {
-        return new DateTime(1970, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc).AddSeconds(unixTimeStamp).ToLocalTime();
+        $stringDate = date("Y-m-d H:i:s", $unixTimeStamp);
+        $date = \DateTime::createFromFormat("Y-m-d H:i:s", $stringDate);
+        return $date;
     }
 
 }
