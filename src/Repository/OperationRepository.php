@@ -9,7 +9,11 @@
 namespace App\Repository;
 
 
-class OperationRepository
+use Doctrine\ORM\EntityRepository as EntityRepo;
+
+class OperationRepository extends EntityRepo
 {
 
+    public function findAll(){}
+    public function findById(){}
 }

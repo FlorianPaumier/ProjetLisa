@@ -11,9 +11,12 @@ namespace App\Controller;
 use App\Entity\ArticleEntity;
 use App\Entity\CatalogueEntity;
 use App\Entity\MagasinEntity;
+use App\Entity\MediaEntity;
 use App\Entity\OperationEntity;
 use App\Entity\PageEntity;
 use App\Entity\ParametresEntity;
+use App\Entity\PrixArticleCategoryEntity;
+use App\Entity\ValueParamsEntity;
 use App\Entity\ZoneEntity;
 use Doctrine\Common\Persistence\ObjectManager;
 use Doctrine\ORM\EntityManager;
@@ -127,6 +130,8 @@ class ImportXmlController extends Controller
                                     //On va créer un article et récupérer tous les éléments nécessaires
                                     $article = $this->GetArtcile($productElement, $page, $em);
                                     $this->GetArticleParams($productElement, $article, $em);
+                                    $this->GetMedia($productElement, $article, $em);
+                                    $this->GetPrixArticle($productElement, $article, $catalogue, $em);
 
                                     //on parcours les zones
                                     foreach ($productElement->zones->zone as $zoneElement){
@@ -303,7 +308,18 @@ class ImportXmlController extends Controller
      */
     private function GetArtcile(SimpleXMLElement $producElement, PageEntity $pageEntity, ObjectManager $em): ArticleEntity
     {
-        $article = new ArticleEntity();
+
+        $attribute = (array)$producElement->attributes();
+        $children = (array)$producElement->children();
+
+        $article = new ArticleEntity(
+            $attribute["@attributes"]["id"],
+            $children["code"],
+            $children["label"],
+            $children["description"]);
+
+        $em->persist($article);
+
         return $article;
     }
 
@@ -313,10 +329,154 @@ class ImportXmlController extends Controller
      * @param ObjectManager $em
      * @return void
      */
-    private function GetArticleParams(SimpleXMLElement $producElement, ArticleEntity $articleEntity, ObjectManager $em)
+    private function GetArticleParams(SimpleXMLElement $producElement, ArticleEntity $articleEntity, ObjectManager $em): void
     {
-        $parametre = new ParametresEntity();
+        $children = (array)$producElement->children();
+
+        $origin = array(
+            "name" => "origin",
+            "value" => $children["origin"]
+        );
+
+        $packaging = array(
+            "name" => "packaging",
+            "value" => $children["packaging"]
+        );
+
+        $start_validity_date = array(
+            "name" => "start_validity_date",
+            "value" => $children["start_validity_date"]
+        );
+
+        $end_validity_date = array(
+            "name" => "end_validity_date",
+            "value" => $children["end_validity_date"]
+        );
+
+        $mention = array(
+            "name" => "mention",
+            "value" => $children["mention"]
+        );
+
+        $color = array(
+            "name" => "color",
+            "value" => $children["color"]
+        );
+
+        $params = array($origin, $packaging, $start_validity_date, $end_validity_date, $mention, $color);
+
+        foreach ($params as $param){
+            $parameter = new ParametresEntity($param["name"]);
+            $em->persist($parameter);
+            $value = new ValueParamsEntity($param["value"], $parameter, $articleEntity);
+            $em->persist($value);
+        }
+
+        $parametre = new ParametresEntity(null);
     }
+
+
+    private function GetPrixArticle(SimpleXMLElement $productElement,ArticleEntity $article,CatalogueEntity $catalogue,
+                                    ObjectManager $em): void
+    {
+
+        $chidren = (array)$productElement->children();
+
+        #region Test Value
+
+        $prix = $chidren["price"];
+        if(gettype($chidren["price_before_coupon"]) != "object"){
+            $prixcoupon = $chidren["price_before_coupon"];
+        }else{
+            $prixcoupon = null;
+        }
+
+        if(gettype($chidren["price_crossed"]) != "object"){
+            $price_crossed = $chidren["price_crossed"];
+        }else{
+            $price_crossed = null;
+        }
+
+        if(gettype($chidren["Reduction_euro"]) != "object"){
+            $Reduction_euro = $chidren["Reduction_euro"];
+        }else{
+            $Reduction_euro = null;
+        }
+
+        if(gettype($chidren["Reduction_percent"]) != "object"){
+            $Reduction_percent = $chidren["Reduction_percent"];
+        }else{
+            $Reduction_percent = null;
+        }
+
+        if(gettype($chidren["Avantage_euro"]) != "object"){
+            $Avantage_euro = $chidren["Avantage_euro"];
+        }else{
+            $Avantage_euro = null;
+        }
+
+        if(gettype($chidren["Avantage_percent"]) != "object"){
+            $Avantage_percent = $chidren["Avantage_percent"];
+        }else{
+            $Avantage_percent = null;
+        }
+
+        if(gettype($chidren["ecotaxe"]) != "object"){
+            $ecotaxe = $chidren["ecotaxe"];
+        }else{
+            $ecotaxe = null;
+        }
+
+        if(gettype($chidren["lowerprice"]) != "object"){
+            $lowerprice = $chidren["lowerprice"];
+        }else{
+            $lowerprice = null;
+        }
+        #endregion
+
+
+        $prixArticle = new PrixArticleCategoryEntity(
+            $prix,
+            $prixcoupon,
+            $price_crossed,
+            $Reduction_euro,
+            $Reduction_percent,
+            $Avantage_euro,
+            $Avantage_percent,
+            $ecotaxe,
+            $lowerprice,
+            $article,
+            $catalogue
+        );
+
+        $em->persist($prixArticle);
+    }
+
+    private function GetMedia(SimpleXMLElement $productElement,ArticleEntity $article,ObjectManager $em)
+    {
+        $children = (array)$productElement->children();
+
+        $images = $children["image"];
+        $picto = $children["picto"];
+
+        $images = explode(',', $images);
+
+        $imagePath = "/home/user/Documents/Developpement/API_Project_BTS/API/var/MediaImportLisa/";
+
+        foreach ($images as $image){
+            $name = explode('/', $image);
+
+            $mediaImage = new MediaEntity("image", $imagePath.$name[0], $name[1]);
+            $em->persist($mediaImage);
+        }
+
+        $name = explode('/', $picto);
+
+        $pictoMedia = new MediaEntity("picto", $imagePath.$name[0], $name[1]);
+        $em->persist($pictoMedia);
+
+    }
+
 
     /**
      * @param SimpleXMLElement $zoneElement
@@ -326,8 +486,19 @@ class ImportXmlController extends Controller
      */
     private function GetZoneArticle(SimpleXMLElement $zoneElement,ArticleEntity $article, ObjectManager $em)
     {
+        $attribute = (array)$zoneElement->attributes();
+        $children = (array)$zoneElement->children();
 
-        $zone = new ZoneEntity();
+        $zone = new ZoneEntity(
+            $attribute["@attributes"]["type"],
+            $children["coordx"],
+            $children["coordy"],
+            $children["width"],
+            $children["height"],
+            $article
+        );
+
+        $em->persist($zone);
 
     }
 
@@ -339,7 +510,18 @@ class ImportXmlController extends Controller
      */
     private function GetShop(SimpleXMLElement $shopElement, CatalogueEntity $catalogueEntity, ObjectManager $em)
     {
-        $magasin = new MagasinEntity();
+        $attribute = (array)$shopElement->attributes();
+        $children = (array)$shopElement->children();
+
+        $magasin = new MagasinEntity(
+            $attribute["@attributes"]["id"],
+            self::UnixTimeStampToDateTime(doubleval($children["startDate"])),
+            self::UnixTimeStampToDateTime(doubleval($children["displayStartDate"])),
+            self::UnixTimeStampToDateTime(doubleval($children["displayEndDate"])),
+            $catalogueEntity
+        );
+
+        $em->persist($magasin);
     }
 
     /// <summary>
